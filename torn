@@ -1,0 +1,187 @@
+#!/usr/bin/env python
+
+import sys, os, subprocess, argparse
+import re, string, json
+import pprint
+
+try:
+	import pyimgur
+except ImportError:
+	pass
+
+
+VERSION = '0.4.9'
+DOTFILE = '{home}/.torn'.format(home=os.environ['HOME'])
+
+settings = {
+	'imgur': {
+		'api_key': ""
+	}
+}
+
+args = ()
+verbose = False
+outputfile = None
+
+
+def log(obj):
+	if verbose:
+		pprint.pprint(obj)
+
+
+def getvar(var, default):
+	return default if not var else var
+
+
+def clipboard(str):
+	proc = subprocess.call("echo {str} | pbcopy".format(str=str), shell=True)
+
+
+def error(msg):
+	print str(msg)
+	sys.exit(1)
+
+
+def isModule(name):
+	try:
+		__import__(name)
+	except ImportError:
+		return False
+	else:
+		return True
+
+
+def checkFileExists(fn):
+	try:
+		with open(fn) as f:
+			pass
+	except IOError as e:
+		error(e)
+
+
+def loadSettings():
+	global settings
+
+	try:
+		with open(DOTFILE) as f:
+			content = f.read()
+			settings = json.loads(content)
+			return True
+	except IOError as e:
+		return False
+
+
+def saveSettings():
+	global settings
+
+	try:
+		with open(DOTFILE, 'w+') as f:
+			content = json.dumps(settings)
+			f.write(content)
+	except IOError as e:
+		error(e)
+
+
+def process():
+	global outputfile
+
+	sides = args.sides
+	margin = args.margin
+	noshadow = args.noshadow
+	inputfile = args.inputfile
+	outputfile = getvar(args.outputfile, re.sub(r'(.*)(\.)', '\\1-torned\\2', inputfile))
+
+	def isSide(chr):
+		return sides.find(chr) != -1
+
+		# convert special sides a,h,v to trbl
+	if isSide('a'):
+		sides = string.replace(sides, 'a', 'trbl')
+	if isSide('h'):
+		sides = string.replace(sides, 'h', 'rl')
+	if isSide('v'):
+		sides = string.replace(sides, 'v', 'tb')
+		# make chars unique
+	sides = "".join(set(sides))
+
+	checkFileExists(inputfile)
+
+	cmds = []
+
+	cmds.append("convert")
+	cmds.append("'{file}' -write mpr:source".format(file=inputfile))
+
+	map = dict(t="north", r="east", b="south", l="west")
+
+	for s in 'trbl':
+		if not isSide(s):
+			val="0x20" if s in 'tb' else "20x0"
+			cmds.append("-gravity {direction} -splice {value} -compose Over".format(direction=map[s], value=val))
+
+	cmds.append("\( +clone -alpha extract -virtual-pixel black -spread 20 -blur 0x5 -threshold 50% -spread 1.2 -blur 0x0.6 \)")
+
+	for s in 'trbl':
+		if not isSide(s):
+			val="0x20" if s in 'tb' else "20x0"
+			cmds.append("-gravity {direction} -chop {value} -compose Over".format(direction=map[s], value=val))
+
+	cmds.append("-bordercolor none -border {margin}".format(margin=margin))
+	cmds.append("-alpha off -compose Copy_Opacity -composite -write mpr:prepared")
+
+	if not noshadow:
+		cmds.append("\( +clone -background black -shadow 50x3+0+2 \) -background none -compose DstOver -flatten -compose Over")
+
+	cmds.append("'{file}'".format(file=outputfile))
+
+	cmd = " ".join(cmds)
+
+	log(cmd)
+
+	proc = subprocess.call(cmd, shell=True)
+	clipboard(outputfile)
+
+
+def upload():
+	if not isModule('pyimgur'): return
+
+	img = os.getcwd()+os.sep+outputfile
+	result = pyimgur.upload_image(image_path=img, api_key=settings['imgur']['api_key'])
+	if 'links' in result:
+		clipboard(result['links']['original'])
+		print "Image has been successfully uploaded to: {url}".format(url=result['links']['original'])
+
+
+def main():
+	global args, verbose
+
+	parser = argparse.ArgumentParser(
+		prog="torn",
+		description="Creates a torned paper effect with a subtle dropshadow.",
+		epilog="** depends on image magick: $ brew install imagemagick",
+		formatter_class=argparse.ArgumentDefaultsHelpFormatter
+	)
+	parser.add_help
+	parser.add_argument('--version', action='version', version=VERSION)
+	parser.add_argument('-s', '--sides', nargs='?', default='v', help="the sides to torn. could be any combiantion of [t]op [r]ight [b]ottom [l]eft [v]ertical [h]orizontal a[ll].")
+	parser.add_argument('-m', '--margin', nargs='?', default=10, help="margin width")
+	parser.add_argument('-u', '--upload', action='store_true', help="upload to imgur.com and copy link to clipboard")
+	parser.add_argument('-v', '--verbose', action='store_true', help="display log messages")
+	parser.add_argument('-ns', '--noshadow', action='store_true', help="no drop shadow")
+	parser.add_argument('inputfile')
+	parser.add_argument('outputfile', nargs='?')
+
+	try:
+		args = parser.parse_args()
+		verbose = args.verbose
+		if not loadSettings():
+			saveSettings()
+		process()
+		if args.upload:
+			upload()
+
+	except IOError as e:
+		error(e)
+
+
+if __name__ == "__main__":
+	main()
