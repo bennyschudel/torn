@@ -27,9 +27,8 @@ imgur
 In order to user the imgur service you have to do the following steps:
 
 1. create a [developer api key][2]
-2. run the script once
-	>>> torn examples/screen.png
-3. add your api_key to the **~/.torn** file
+2. run the script once **>>> torn examples/screen.png**
+3. add your api_key to the freshly created **~/.torn** file
 
 
 usage
